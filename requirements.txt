@@ -1,0 +1,4 @@
+google-play-scraper
+groq
+pandas
+python-dotenv
