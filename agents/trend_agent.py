@@ -2,6 +2,9 @@ import os
 import sqlite3
 from datetime import datetime, timedelta
 import pandas as pd
+from logger_config import get_logger
+
+logger = get_logger(__name__)
 
 
 DB_PATH = "data/topic_registry.db"
@@ -12,7 +15,7 @@ def generate_trend_report(start_date: str, end_date: str, output_path: str):
     """
     Generate a topic trend report from start_date to end_date (inclusive).
     """
-    print(f"📈 Generating trend report from {start_date} to {end_date}...")
+    logger.info(f"Generating trend report from {start_date} to {end_date}")
     # ---- Validate dates ----
     start = _parse_date(start_date)
     end = _parse_date(end_date)
@@ -21,6 +24,7 @@ def generate_trend_report(start_date: str, end_date: str, output_path: str):
         raise ValueError("start_date must be <= end_date")
 
     # ---- Ensure DB directory exists and initialize ----
+    logger.debug(f"Ensuring database directory exists: {DB_PATH}")
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -42,13 +46,16 @@ def generate_trend_report(start_date: str, end_date: str, output_path: str):
     """)
 
     conn.commit()
+    logger.debug("Database tables initialized")
 
+    logger.debug(f"Querying topics from database")
     topics_df = pd.read_sql_query(
         "SELECT topic_id, canonical_name FROM topics",
         conn
     )
 
     if topics_df.empty:
+        logger.warning("No topics found in database, writing empty report")
         conn.close()
         _write_empty_report(start, end, output_path)
         return
@@ -89,43 +96,48 @@ def generate_trend_report(start_date: str, end_date: str, output_path: str):
     ).reset_index()
 
     report_df = report_df.sort_values("canonical_name")
+    logger.debug(f"Report dataframe shape: {report_df.shape}")
 
     _safe_mkdir(output_path)
+    logger.debug(f"Writing report to {output_path}")
     report_df.to_csv(output_path, index=False)
 
-    print(f"✅ Trend report written to {output_path}")
+    logger.info(f"Trend report written to {output_path}")
 
 
 # ---------- Helpers ----------
 
 def _parse_date(date_str: str):
-    print("📅 Parsing date...")
+    logger.debug(f"Parsing date: {date_str}")
     try:
         return datetime.strptime(date_str, DATE_FORMAT).date()
     except ValueError:
+        logger.error(f"Invalid date format: {date_str}. Expected YYYY-MM-DD")
         raise ValueError(f"Invalid date format: {date_str}. Expected YYYY-MM-DD")
 
 
 def _build_date_range(start, end):
-    print("📅 Building date range...")
+    logger.debug(f"Building date range from {start} to {end}")
     dates = []
     current = start
     while current <= end:
         dates.append(current.isoformat())
         current += timedelta(days=1)
+    logger.debug(f"Generated {len(dates)} dates in range")
     return dates
 
 
 def _safe_mkdir(path: str):
-    print("📁 Ensuring output directory exists...")
+    logger.debug(f"Ensuring output directory exists: {path}")
     directory = os.path.dirname(path)
     if directory:
         os.makedirs(directory, exist_ok=True)
 
 
 def _write_empty_report(start, end, output_path):
-    print("📈 Writing empty trend report...")
+    logger.info(f"Writing empty trend report from {start} to {end}")
     date_range = _build_date_range(start, end)
     df = pd.DataFrame(columns=["canonical_name"] + date_range)
     _safe_mkdir(output_path)
+    logger.debug(f"Writing empty report to {output_path}")
     df.to_csv(output_path, index=False)

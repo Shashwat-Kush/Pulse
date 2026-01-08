@@ -1,15 +1,19 @@
 import os
+import time
 import json
 from typing import List, Dict
 from dotenv import load_dotenv
 load_dotenv()
 
 from groq import Groq, APIError
+from logger_config import get_logger
+
+logger = get_logger(__name__)
 
 # Initialize Groq client
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-MODEL_NAME = "llama3-70b-8192"
+MODEL_NAME = "llama-3.3-70b-versatile"
 
 
 def extract_topics_from_reviews(reviews: List[Dict]) -> List[Dict]:
@@ -17,13 +21,16 @@ def extract_topics_from_reviews(reviews: List[Dict]) -> List[Dict]:
     Extract high-recall candidate topics from a list of reviews.
     """
     candidate_topics = []
-    print("🧠 Extracting topics from reviews...")
+    logger.info(f"Extracting topics from {len(reviews)} reviews...")
     for review in reviews:
         review_text = review.get("text", "")
         if not review_text:
+            logger.debug(f"Skipping review {review.get('review_id')} - no text")
             continue
 
         topics = _extract_from_single_review(review_text)
+        time.sleep(0.6)
+        logger.debug(f"Extracted {len(topics)} topics from review {review.get('review_id')}")
 
         for topic in topics:
             candidate_topics.append({
@@ -31,18 +38,37 @@ def extract_topics_from_reviews(reviews: List[Dict]) -> List[Dict]:
                 "review_id": review.get("review_id"),
                 "review_date": review.get("date"),
             })
-    print(f"🧠 Extracted {len(candidate_topics)} candidate topics.")
+    logger.info(f"Extracted {len(candidate_topics)} candidate topics total")
     return candidate_topics
+
+def safe_extract_topics(content: str) -> list[str]:
+    if not content or not content.strip():
+        return []
+
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict) and "topics" in parsed:
+            return parsed["topics"]
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: treat each non-trivial line as a topic
+    return [
+        line.strip("-• ").strip()
+        for line in content.splitlines()
+        if len(line.strip()) > 3
+    ]
 
 
 def _extract_from_single_review(review_text: str) -> List[str]:
     """
     Call Groq LLM to extract topics from one review.
     """
-    print("🧠 Extracting from single review...")
+    logger.debug("Extracting topics from single review using LLM")
     prompt = _build_prompt(review_text)
 
     try:
+        logger.debug("Calling LLM for topic extraction")
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
@@ -60,17 +86,22 @@ def _extract_from_single_review(review_text: str) -> List[str]:
         )
 
         content = response.choices[0].message.content
+        logger.debug("Successfully received LLM response")
 
         parsed = json.loads(content)
-        return parsed.get("topics", [])
+        # topics = parsed.get("topics", [])
+        # logger.debug(f"Parsed {len(topics)} topics from LLM response")
+        # return topics
+        return safe_extract_topics(content)
 
-    except (APIError, json.JSONDecodeError, KeyError):
+    except (APIError, json.JSONDecodeError, KeyError) as e:
         # Fail-safe: return empty list instead of crashing pipeline
+        logger.warning(f"Failed to extract topics from review: {e}")
         return []
 
 
 def _build_prompt(review_text: str) -> str:
-    print("🧠 Building prompt for review...")
+    logger.debug("Building LLM prompt for review")
     return f"""
 You are analyzing a user review from a food delivery app.
 
